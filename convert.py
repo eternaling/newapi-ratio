@@ -11,12 +11,11 @@ def rewrite_expr(expr: str) -> str:
         try:
             val = float(m.group(1))
             total_add += val
-        except:
+        except Exception:
             pass
 
-    # 删除全部 cc12h * xxx
     s = cc12h_pat.sub("", expr)
-    # 清理乱七八糟的 +
+    # 清理多余加号
     s = re.sub(r'\s*\+\s*$', '', s)
     s = re.sub(r'\+\s*\+', '+', s)
     s = re.sub(r'\(\s*\+', '(', s)
@@ -30,11 +29,10 @@ def rewrite_expr(expr: str) -> str:
             old = float(match_cc.group(1))
             new_coeff = old + total_add
             s = cc_pat.sub(f'cc * {new_coeff}', s, count=1)
-        except:
+        except Exception:
             pass
     else:
         if total_add > 0:
-            # 没有cc项，插入cc
             s = re.sub(r'tier\(', rf'tier("cc_auto", cc * {total_add} + ', s, count=1)
     return s.strip()
 
@@ -49,11 +47,15 @@ def main():
 
     error_models = []
     for model_name, cfg in list(data.items()):
+        # ========== 关键修复：先判断是不是字典 ==========
+        if not isinstance(cfg, dict):
+            print(f"[SKIP] {model_name}: cfg is not dict, type={type(cfg)} value={cfg}")
+            continue
+
         if "tiered_expr" in cfg:
             raw = cfg["tiered_expr"]
             try:
                 cfg["tiered_expr"] = rewrite_expr(raw)
-                # 二次检查，确保输出不再包含cc12h
                 if "cc12h" in cfg["tiered_expr"]:
                     print(f"[WARN] {model_name} still has cc12h after rewrite")
             except Exception as e:
