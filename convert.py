@@ -5,36 +5,26 @@ def rewrite_expr(expr: str) -> str:
     if not isinstance(expr, str):
         return expr
 
-    cc12h_pat = re.compile(r'cc12h\s*\*\s*([0-9.]+)')
-    total_add = 0.0
-    for m in cc12h_pat.finditer(expr):
-        try:
-            val = float(m.group(1))
-            total_add += val
-        except Exception:
-            pass
+    # 精准匹配 cc * A + cc12h * B 这种相邻组合（basellm固定格式）
+    pat_pair = re.compile(r'cc\s*\*\s*([0-9.]+)\s*\+\s*cc12h\s*\*\s*([0-9.]+)')
+    def replace_pair(m):
+        a = float(m.group(1))
+        b = float(m.group(2))
+        return f'cc * {a + b}'
+    # 循环替换，直到没有匹配（一条表达式里面可能多组，两个tier分支就是两组）
+    while pat_pair.search(expr):
+        expr = pat_pair.sub(replace_pair, expr)
 
-    s = cc12h_pat.sub("", expr)
-    # 清理多余加号
-    s = re.sub(r'\s*\+\s*$', '', s)
-    s = re.sub(r'\+\s*\+', '+', s)
-    s = re.sub(r'\(\s*\+', '(', s)
-    s = re.sub(r'\+\s*\)', ')', s)
-    s = re.sub(r'\s*\+\s*\+', '+', s)
+    # 兜底：如果出现 cc12h 单独存在（异常写法）直接删除
+    pat_single_cc12h = re.compile(r'\s*\+?\s*cc12h\s*\*\s*[0-9.]+\s*')
+    expr = pat_single_cc12h.sub('', expr)
 
-    cc_pat = re.compile(r'cc\s*\*\s*([0-9.]+)')
-    match_cc = cc_pat.search(s)
-    if match_cc:
-        try:
-            old = float(match_cc.group(1))
-            new_coeff = old + total_add
-            s = cc_pat.sub(f'cc * {new_coeff}', s, count=1)
-        except Exception:
-            pass
-    else:
-        if total_add > 0:
-            s = re.sub(r'tier\(', rf'tier("cc_auto", cc * {total_add} + ', s, count=1)
-    return s.strip()
+    # 清理多余连续加号
+    expr = re.sub(r'\+\s*\+', '+', expr)
+    expr = re.sub(r'\(\s*\+', '(', expr)
+    expr = re.sub(r'\+\s*\)', ')', expr)
+    expr = expr.strip()
+    return expr
 
 
 def main():
@@ -47,7 +37,6 @@ def main():
 
     error_models = []
     for model_name, cfg in list(data.items()):
-        # ========== 关键修复：先判断是不是字典 ==========
         if not isinstance(cfg, dict):
             print(f"[SKIP] {model_name}: cfg is not dict, type={type(cfg)} value={cfg}")
             continue
@@ -55,9 +44,10 @@ def main():
         if "tiered_expr" in cfg:
             raw = cfg["tiered_expr"]
             try:
-                cfg["tiered_expr"] = rewrite_expr(raw)
-                if "cc12h" in cfg["tiered_expr"]:
-                    print(f"[WARN] {model_name} still has cc12h after rewrite")
+                new_expr = rewrite_expr(raw)
+                cfg["tiered_expr"] = new_expr
+                if "cc12h" in new_expr:
+                    print(f"[WARN] {model_name} STILL contains cc12h! expr={new_expr}")
             except Exception as e:
                 error_models.append(model_name)
                 print(f"[WARN] {model_name} rewrite skip: {repr(e)}")
