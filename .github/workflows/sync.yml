@@ -27,7 +27,9 @@ jobs:
           fi
 
       - name: Run convert script
-        run: python3 convert.py
+        run: |
+          python3 -u convert.py
+          cat ratio_config-newapi.json | grep cc12h || echo "no cc12h found in output"
 
       - name: Commit generated file
         run: |
@@ -37,6 +39,7 @@ jobs:
           # 没有变更时跳过commit，避免报错
           git commit -m "auto update ratio from upstream" || echo "no changes to commit"
           git push
+
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
