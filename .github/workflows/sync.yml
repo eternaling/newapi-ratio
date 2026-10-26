@@ -1,8 +1,8 @@
 name: Sync & Convert Ratio
 on:
   schedule:
-    - cron: '0 */6 * * *'  # 每6小时自动同步一次，可改
-  workflow_dispatch: # 支持手动点按钮触发
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # 手动触发
 
 jobs:
   build:
@@ -12,28 +12,38 @@ jobs:
       pages: write
       id-token: write
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Fetch & convert json
+      - name: Fetch upstream json
         run: |
-          curl -L "https://basellm.github.io/llm-metadata/api/newapi/ratio_config-v1-base.json" -o src.json
-          python3 convert.py
+          set -e
+          curl --retry 3 --retry-delay 5 --connect-timeout 10 -L "https://basellm.github.io/llm-metadata/api/newapi/ratio_config-v1-base.json" -o src.json
+          ls -lh src.json
+          # 检查文件大小，空文件直接报错终止
+          if [ ! -s src.json ]; then
+            echo "ERROR: downloaded src.json is empty!"
+            exit 1
+          fi
 
-      - name: Commit output file
+      - name: Run convert script
+        run: python3 convert.py
+
+      - name: Commit generated file
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add ratio_config-newapi.json
-          git commit -m "auto update ratio from upstream" || echo "no change"
+          # 没有变更时跳过commit，避免报错
+          git commit -m "auto update ratio from upstream" || echo "no changes to commit"
           git push
-      
-      - name: Setup Pages
+
+      - name: Configure Pages
         uses: actions/configure-pages@v5
-      - name: Upload artifact
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./
-      - name: Deploy to GitHub Pages
+      - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
