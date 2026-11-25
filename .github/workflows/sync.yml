@@ -17,14 +17,39 @@ jobs:
 
       - name: Fetch upstream json
         run: |
-          set -e
-          curl --retry 3 --retry-delay 5 --connect-timeout 10 -L "https://basellm.github.io/llm-metadata/api/newapi/ratio_config-v1-base.json" -o src.json
+          set -euo pipefail
+          URL="https://basellm.github.io/llm-metadata/api/newapi/ratio_config-v1-base.json"
+          for attempt in 1 2 3 4 5; do
+            rm -f src.json
+            if curl --fail --location --silent --show-error \
+                 --retry 3 --retry-all-errors --retry-delay 5 \
+                 --connect-timeout 15 --max-time 120 \
+                 "$URL" -o src.json && [ -s src.json ]; then
+              echo "[OK] attempt $attempt: downloaded $(stat -c%s src.json) bytes"
+              break
+            fi
+            echo "::warning::attempt $attempt: download failed or empty body"
+            if [ "$attempt" -eq 5 ]; then
+              echo "::error::could not download a non-empty src.json after 5 attempts"
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
           ls -lh src.json
-          # 检查文件大小，空文件直接报错终止
-          if [ ! -s src.json ]; then
-            echo "ERROR: downloaded src.json is empty!"
-            exit 1
-          fi
+
+      - name: Validate src.json
+        run: |
+          set -euo pipefail
+          test -s src.json || { echo "::error::src.json is empty"; exit 1; }
+          python3 -c '
+          import json, sys
+          root = json.load(open("src.json", encoding="utf-8"))
+          expr = (root.get("data") or {}).get("billing_expr")
+          if not isinstance(expr, dict) or not expr:
+              print("::error::src.json invalid: data.billing_expr missing or empty")
+              sys.exit(1)
+          print(f"[VALID] {len(expr)} models in data.billing_expr")
+          '
 
       - name: Run convert script
         run: |
@@ -33,20 +58,34 @@ jobs:
 
       - name: Commit generated file
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add ratio_config-newapi.json
-          # 没有变更时跳过commit，避免报错
-          git commit -m "auto update ratio from upstream" || echo "no changes to commit"
-          git push
-
+          if git diff --cached --quiet; then
+            echo "no changes to commit"
+          else
+            git commit -m "auto update ratio from upstream"
+            git push
+          fi
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
+
+      # 上传必须在 build 作业里完成；deploy 放到单独的作业，
+      # 避免 upload→deploy 同作业时 deploy-pages 查不到刚上传的 artifact
+      # （actions/deploy-pages#451 的已知间歇性竞态）
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    steps:
       - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
