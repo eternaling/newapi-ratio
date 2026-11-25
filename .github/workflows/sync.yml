@@ -56,11 +56,24 @@ jobs:
           python3 -u convert.py
           cat ratio_config-newapi.json | grep cc12h || echo "no cc12h found in output"
 
+      # 同一份产物发布成三个路径：newapi 的定价同步（选 pricing 接口）
+      # 请求 {源地址}/api/pricing，/pricing 是手填/其他工具用的别名
+      - name: Publish pricing endpoints
+        run: |
+          set -euo pipefail
+          mkdir -p api
+          cp ratio_config-newapi.json api/pricing
+          cp ratio_config-newapi.json pricing
+          # 三个文件必须完全一致
+          cmp ratio_config-newapi.json api/pricing
+          cmp ratio_config-newapi.json pricing
+          ls -l ratio_config-newapi.json api/pricing pricing
+
       - name: Commit generated file
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add ratio_config-newapi.json
+          git add ratio_config-newapi.json api/pricing pricing
           if git diff --cached --quiet; then
             echo "no changes to commit"
           else
